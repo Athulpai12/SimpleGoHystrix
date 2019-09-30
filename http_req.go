@@ -2,6 +2,7 @@ package SimpleGoHystrix
 
 import (
 	"io"
+	"math"
 	"math/rand"
 	"net/http"
 	"runtime"
@@ -54,6 +55,42 @@ func init() {
 	random = rand.New(rand.NewSource(time.Now().UnixNano()))
 }
 
+func ExponentialBackoff(i int) time.Duration {
+	return time.Duration(1<<uint(i)) * time.Second
+}
+
+func ExponentialBackoffJitter(i int) time.Duration {
+	return jitter(1 << uint(i))
+}
+
+func defaultBackoff(i int) time.Duration {
+	return DEFAULTVALUE * time.Second
+}
+
+func LinearBackoff(i int) time.Duration {
+	return time.Duration(i*DEFAULTVALUE) * time.Second
+}
+
+func LinearBackoffJitter(i int) time.Duration {
+	return jitter(uint(i * DEFAULTVALUE))
+}
+
+func jitter(i uint) time.Duration {
+	return time.Duration(random.Intn(int(math.Min(MAXDURATION, float64(i))))) * time.Second
+}
+
+type backoffAlgo func(int) time.Duration
+
+type logginghook func(ErrLog)
+
+func (c *Client) log(e ErrLog) {
+	if c.keeplog {
+		//locking is required to avoid race conditions
+		c.Lock()
+		c.errData = append(c.errData, e)
+		c.Unlock()
+	}
+}
 
 type Client struct {
 	//Using the default http client
