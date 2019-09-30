@@ -1,11 +1,59 @@
 package SimpleGoHystrix
 
 import (
+	"io"
+	"math/rand"
 	"net/http"
 	"runtime"
 	"sync"
 	"context"
+	"time"
 )
+
+type Request struct {
+	// ReadSeeker inplace of default Reader because we need to seek back to zero when a post call fails
+	body io.ReadSeeker
+	*http.Request
+}
+
+//this is for caching the transport layer data
+type cacheTransport struct {
+	data map[interface{}]interface{}
+	//To avoid race condition
+	mu                sync.RWMutex
+	originalTransport http.RoundTripper
+}
+
+type result struct {
+	//The response object given by go routines
+	resp *http.Response
+	err  error
+}
+
+type ErrLog struct {
+	method  string
+	url     string
+	body    io.ReadSeeker
+	request int
+	retry   int
+	attempt int
+	err     error
+}
+
+const (
+	DEFAULTVALUE = 5
+	MAXDURATION  = 300
+)
+
+//Random variable for introducing jitter
+var random *rand.Rand
+
+func init() {
+	//This is introducing a seed in PRNG
+
+	random = rand.New(rand.NewSource(time.Now().UnixNano()))
+}
+
 
 type Client struct {
 	//Using the default http client
