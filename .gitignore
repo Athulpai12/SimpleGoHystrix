@@ -1,0 +1,12 @@
+*.pyc
+*.DS_Store
+# goland ide
+*.idea
+#vs code ide
+.vscode
+
+# Test binary, built with `go test -c`
+*.test
+
+#mac stuff
+.DS_store
