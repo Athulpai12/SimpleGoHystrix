@@ -1,6 +1,8 @@
 package SimpleGoHystrix
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"math"
 	"math/rand"
@@ -120,6 +122,96 @@ type Client struct {
 	wg *sync.WaitGroup
 
 	sync.Mutex
+}
+
+func retry(ctx context.Context, wg *sync.WaitGroup, c *Client, req *Request, multiplexChan chan<- result, closerResultChan <-chan bool, retry int, backoff backoffAlgo) {
+	fmt.Println("in go routine")
+	wg.Add(1)
+	defer func(){
+		fmt.Println("here for closure")
+		wg.Done()
+	}()
+	var resp *http.Response
+	var err error
+	// retries for with backoff strategy
+	for attempt := 0; attempt < retry; attempt++ {
+		//Reset body to the beginning of response as the body is drained every time
+		fmt.Println(retry, "lets see attempts", attempt)
+		select {
+		case <-ctx.Done():
+			fmt.Println("forced cancel")
+			err := errors.New("forced Cancel error")
+			multiplexChan <- result{nil, err}
+			return
+		case <-closerResultChan:
+			return
+		default:
+			fmt.Println("out of heere")
+		}
+		fmt.Println("in here n out")
+		resp, err = c.client.Do(req.Request)
+		fmt.Println("receied terp value")
+		errLog := ErrLog{
+			method:  req.Request.Method,
+			url:     req.Request.URL.RequestURI(),
+			body:    req.body,
+			request: 0,
+			retry:   retry,
+			attempt: attempt,
+			err:     err,
+		}
+		c.log(errLog)
+		fmt.Println(resp,err)
+		if err == nil && resp.StatusCode < 500 {
+
+			multiplexChan <- result{resp: resp, err: nil}
+			fmt.Println("out of routine  and in m ultiplex")
+			return
+		}
+
+		select {
+		// After will fail if backoff return zero (to prevent that error 1 extra millisecond is added)
+		case <-time.After(backoff(attempt) + 1*time.Millisecond):
+		//canceling a go-routine
+		case <-ctx.Done():
+			err := errors.New("forced Cancel error")
+			multiplexChan <- result{nil, err}
+			return
+		case <-closerResultChan:
+			return
+		}
+
+	}
+	//exp := utils.RaiseNetworkError("The go routine failed with the following error", err, nil)
+	multiplexChan <- result{resp: resp, err: err}
+	return
+}
+
+func multiplex(ctx context.Context, multiplexChan <-chan result, resultChan chan<- result, finishChan <-chan bool) {
+	//This is done to prevent memory leaks in go routine
+	var firstData = false
+	var res result
+	for {
+		select {
+		case res = <-multiplexChan:
+			if !firstData {
+				firstData = true
+				resultChan <- res
+				close(resultChan)
+			} else {
+				response := res.resp
+				if response != nil {
+					response.Body.Close()
+				}
+			}
+		case <-finishChan:
+			fmt.Println("finally finished")
+			return
+
+
+		}
+	}
+	fmt.Println("Ended this routine")
 }
 
 func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
